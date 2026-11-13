@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import { getMyProfile, updateMyProfile, listProfiles, getMyClientProfile, updateMyClientProfile } from '../controllers/profileController.js';
+import requireAuth from '../middleware/requireAuth.js';
+const router = Router();
+const requireStudent = (req, res, next) => req.user?.roles?.[0] === 'student' ? next() : res.status(403).json({ message: 'A Student account is required to access this profile.' });
+const requireClient = (req, res, next) => req.user?.roles?.[0] === 'client' ? next() : res.status(403).json({ message: 'A Client account is required to access this profile.' });
+router.get('/', listProfiles);
+router.get('/me', requireAuth, requireStudent, getMyProfile);
+router.put('/me', requireAuth, requireStudent, updateMyProfile);
+router.get('/client/me', requireAuth, requireClient, getMyClientProfile);
+router.put('/client/me', requireAuth, requireClient, updateMyClientProfile);
+export default router;
