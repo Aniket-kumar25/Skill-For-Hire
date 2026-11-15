@@ -39,7 +39,7 @@ export default function HomePage() {
             <div className="preview-top"><span className="preview-label">STUDENT / PROFILE</span><span className="availability"><i /> AVAILABLE</span></div>
             <div className="preview-person">
               <div className="avatar">AK</div>
-              <div><h2>Alex Kumar</h2><p>Frontend developer</p><small>Computer Science · Year 3</small></div>
+              <div><h2>Jack</h2><p>Frontend developer</p><small>Computer Science · Year 3</small></div>
             </div>
             <p className="preview-bio">I turn thoughtful ideas into useful digital experiences, with a focus on clean interfaces and accessible design.</p>
             <div className="preview-divider" />
