@@ -1,5 +1,352 @@
 "use client";
-import SiteHeader from '../../components/SiteHeader';import Link from 'next/link';import {useEffect,useState} from 'react';import {useParams} from 'next/navigation';
-const API=process.env.NEXT_PUBLIC_GIG_API_URL||'http://localhost:5001/api';const money=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(n)||0);
-export default function GigDetails(){const {id}=useParams();const [gig,setGig]=useState(null),[proposal,setProposal]=useState(''),[budget,setBudget]=useState(''),[days,setDays]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);useEffect(()=>{if(!id)return;fetch(`${API}/gigs/${id}`,{credentials:'include'}).then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.message||'Gig not found');setGig(d.gig)}).catch(e=>setNotice(e.message))},[id]);async function apply(e){e.preventDefault();setBusy(true);setNotice('');try{const r=await fetch(`${API}/gigs/${id}/applications`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposal,proposedBudget:budget?Number(budget):undefined,estimatedDays:days?Number(days):undefined})});const d=await r.json();if(!r.ok)throw Error(d.message||'Could not submit application');setNotice('Application submitted successfully. You can track it in My Applications.');setProposal('')}catch(e){setNotice(e.message)}finally{setBusy(false)}}
-return <main className="min-h-screen bg-slate-50"><SiteHeader/><div className="mx-auto max-w-3xl px-5 py-8"><Link href="/gigs" className="text-sm font-semibold text-teal-700">← Back to Browse Gigs</Link>{!gig?<p className="py-16 text-center text-slate-500">{notice||'Loading gig…'}</p>:<><article className="mt-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-800">{gig.category}</span><h1 className="mt-4 text-3xl font-bold">{gig.title}</h1><p className="mt-4 whitespace-pre-wrap leading-7 text-slate-600">{gig.description}</p><div className="mt-5 flex flex-wrap gap-2">{gig.requiredSkills.map(s=><span key={s} className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold">{s}</span>)}</div><div className="mt-6 grid gap-4 rounded-xl bg-slate-50 p-4 sm:grid-cols-3"><div><p className="text-xs text-slate-500">BUDGET</p><b>{money(gig.budgetMin)} – {money(gig.budgetMax)}</b></div><div><p className="text-xs text-slate-500">DEADLINE</p><b>{new Date(gig.deadline).toLocaleDateString()}</b></div><div><p className="text-xs text-slate-500">STATUS</p><b className="capitalize">{gig.status}</b></div></div></article><form onSubmit={apply} className="mt-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-bold">Apply for this gig</h2><p className="mt-1 text-sm text-slate-500">Explain why you are a good fit. Your skills are matched against the gig requirements.</p><label className="mt-5 block text-sm font-semibold">Your proposal (at least 30 characters)<textarea required minLength={30} maxLength={3000} rows={6} value={proposal} onChange={e=>setProposal(e.target.value)} placeholder="Describe your relevant experience, approach and expected outcome…" className="mt-2 w-full rounded-xl border border-slate-200 p-3 font-normal outline-none focus:border-teal-500"/></label><div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-sm font-semibold">Your proposed budget (₹, optional)<input type="number" min="0" value={budget} onChange={e=>setBudget(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 p-3 font-normal"/></label><label className="text-sm font-semibold">Estimated days (optional)<input type="number" min="1" value={days} onChange={e=>setDays(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 p-3 font-normal"/></label></div>{notice&&<p role="status" className="mt-4 rounded-xl bg-teal-50 p-3 text-sm text-teal-800">{notice}</p>}<button disabled={busy||gig.status!=='open'} className="mt-5 rounded-xl bg-teal-700 px-5 py-3 font-bold text-white disabled:opacity-50">{busy?'Submitting…':'Submit application →'}</button></form></>}</div></main>}
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import SiteHeader from '../../components/SiteHeader';
+
+const GIG_API = process.env.NEXT_PUBLIC_GIG_API_URL || 'http://localhost:5001/api';
+
+function formatBudget(amount) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(Number(amount) || 0);
+}
+
+function getUnavailableReason(status, isExpired) {
+  if (status === 'closed') {
+    return 'This gig is closed and no longer accepting applications.';
+  }
+  if (status === 'paused') {
+    return 'This gig is currently paused and not accepting applications.';
+  }
+  if (isExpired) {
+    return 'The deadline for this gig has passed, so it is no longer accepting applications.';
+  }
+  return 'This gig is not currently accepting applications.';
+}
+
+export default function GigDetailsPage() {
+  const params = useParams();
+  const gigId = Array.isArray(params?.id) ? params.id[0] : params?.id;
+
+  const [gig, setGig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  const [proposal, setProposal] = useState('');
+  const [budget, setBudget] = useState('');
+  const [days, setDays] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState('');
+  const [submittedApplication, setSubmittedApplication] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    setGig(null);
+    setLoadError('');
+    setSubmitError('');
+    setNeedsSignIn(false);
+    setSubmitSuccess('');
+    setSubmittedApplication(null);
+
+    if (!gigId) {
+      setLoadError('Gig ID is missing.');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+
+    async function loadGig() {
+      try {
+        const response = await fetch(`${GIG_API}/gigs/${gigId}`, {
+          credentials: 'include'
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Gig not found');
+        }
+
+        if (!data.gig || typeof data.gig !== 'object' || Array.isArray(data.gig)) {
+          throw new Error('Gig details could not be loaded. Please try again.');
+        }
+
+        if (active) {
+          setGig(data.gig);
+        }
+      } catch (err) {
+        if (active) {
+          setLoadError(err instanceof Error ? err.message : 'Gig not found');
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadGig();
+
+    return () => {
+      active = false;
+    };
+  }, [gigId]);
+
+  async function handleApply(event) {
+    event.preventDefault();
+    setSubmitError('');
+    setNeedsSignIn(false);
+    setSubmitSuccess('');
+    setSubmittedApplication(null);
+
+    const trimmedProposal = proposal.trim();
+    if (trimmedProposal.length < 30) {
+      setSubmitError('Your proposal must contain at least 30 characters.');
+      return;
+    }
+
+    const trimmedBudget = budget.trim();
+    const trimmedDays = days.trim();
+
+    setBusy(true);
+
+    try {
+      const response = await fetch(`${GIG_API}/gigs/${gigId}/applications`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proposal: trimmedProposal,
+          proposedBudget: trimmedBudget !== '' ? Number(trimmedBudget) : undefined,
+          estimatedDays: trimmedDays !== '' ? Number(trimmedDays) : undefined
+        })
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        setNeedsSignIn(true);
+        setSubmitError(data.message || 'Please sign in.');
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Could not submit application');
+      }
+
+      setSubmittedApplication(data.application || null);
+      setSubmitSuccess('Application submitted successfully.');
+      setProposal('');
+      setBudget('');
+      setDays('');
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Could not submit application');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const requiredSkills = Array.isArray(gig?.requiredSkills) ? gig.requiredSkills : [];
+  const parsedDeadline = gig?.deadline ? new Date(gig.deadline) : null;
+  const hasValidDeadline = Boolean(parsedDeadline && !Number.isNaN(parsedDeadline.getTime()));
+  const formattedDeadline = hasValidDeadline ? parsedDeadline.toLocaleDateString() : 'Not set';
+  const isExpired = hasValidDeadline && parsedDeadline < new Date();
+  const canApply = gig?.status === 'open' && !isExpired;
+
+  const returnedMatchedSkills = Array.isArray(submittedApplication?.matchedSkills)
+    ? submittedApplication.matchedSkills
+    : [];
+
+  return (
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <SiteHeader />
+      <div className="mx-auto max-w-3xl px-5 py-8">
+        <Link href="/gigs" className="text-sm font-semibold text-teal-700 hover:underline">
+          ← Back to Browse Gigs
+        </Link>
+
+        {loading && (
+          <p className="py-16 text-center text-slate-500">Loading gig…</p>
+        )}
+
+        {!loading && loadError && (
+          <p
+            role="alert"
+            className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"
+          >
+            {loadError}
+          </p>
+        )}
+
+        {!loading && !loadError && gig && (
+          <>
+            <article className="mt-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-800">
+                {gig.category}
+              </span>
+              <h1 className="mt-4 text-3xl font-bold">{gig.title}</h1>
+              <p className="mt-4 whitespace-pre-wrap leading-7 text-slate-600">
+                {gig.description}
+              </p>
+
+              {requiredSkills.length > 0 && (
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {requiredSkills.map((skill) => (
+                    <span
+                      key={skill}
+                      className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-6 grid gap-4 rounded-xl bg-slate-50 p-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-slate-500">BUDGET</p>
+                  <b>
+                    {formatBudget(gig.budgetMin)} – {formatBudget(gig.budgetMax)}
+                  </b>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">DEADLINE</p>
+                  <b>{formattedDeadline}</b>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">STATUS</p>
+                  <b className="capitalize">{gig.status}</b>
+                </div>
+              </div>
+            </article>
+
+            <form
+              onSubmit={handleApply}
+              className="mt-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+            >
+              <h2 className="text-xl font-bold">Apply for this gig</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Explain why you are a good fit. Your skills are matched against the gig
+                requirements.
+              </p>
+
+              {!canApply && (
+                <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  {getUnavailableReason(gig.status, isExpired)}
+                </p>
+              )}
+
+              <label className="mt-5 block text-sm font-semibold">
+                Your proposal (at least 30 characters)
+                <textarea
+                  required
+                  minLength={30}
+                  maxLength={3000}
+                  rows={6}
+                  value={proposal}
+                  onChange={(event) => setProposal(event.target.value)}
+                  placeholder="Describe your relevant experience, approach and expected outcome…"
+                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 font-normal outline-none focus:border-teal-500"
+                />
+              </label>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="text-sm font-semibold">
+                  Your proposed budget (₹, optional)
+                  <input
+                    type="number"
+                    min="0"
+                    value={budget}
+                    onChange={(event) => setBudget(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-slate-200 p-3 font-normal"
+                  />
+                </label>
+
+                <label className="text-sm font-semibold">
+                  Estimated days (optional)
+                  <input
+                    type="number"
+                    min="1"
+                    value={days}
+                    onChange={(event) => setDays(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-slate-200 p-3 font-normal"
+                  />
+                </label>
+              </div>
+
+              {submitError && (
+                <div
+                  role="alert"
+                  className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"
+                >
+                  <p>{submitError}</p>
+                  {needsSignIn && (
+                    <Link
+                      href="/auth"
+                      className="mt-2 inline-block font-semibold text-rose-800 underline"
+                    >
+                      Sign in
+                    </Link>
+                  )}
+                </div>
+              )}
+
+              {submitSuccess && (
+                <div
+                  role="status"
+                  className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-900"
+                >
+                  <p className="font-semibold">{submitSuccess}</p>
+
+                  {typeof submittedApplication?.matchScore === 'number' && (
+                    <p className="mt-1">
+                      Skill match score: <b>{submittedApplication.matchScore}%</b>
+                    </p>
+                  )}
+
+                  {returnedMatchedSkills.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-semibold text-teal-800">Matched skills:</span>
+                      {returnedMatchedSkills.map((skill) => (
+                        <span
+                          key={skill}
+                          className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-teal-800"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="mt-2">
+                    Track your submission in{' '}
+                    <Link href="/applications" className="font-semibold text-teal-800 underline">
+                      My Applications
+                    </Link>
+                    .
+                  </p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={busy || !canApply}
+                className="mt-5 rounded-xl bg-teal-700 px-5 py-3 font-bold text-white hover:bg-teal-800 disabled:opacity-50"
+              >
+                {busy ? 'Submitting…' : 'Submit application →'}
+              </button>
+            </form>
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
+
