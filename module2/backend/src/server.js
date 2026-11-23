@@ -1,5 +1,52 @@
-import dotenv from 'dotenv'; import path from 'node:path'; import {fileURLToPath} from 'node:url'; const dir=path.dirname(fileURLToPath(import.meta.url)); dotenv.config({path:path.resolve(dir,'../.env')});
-import express from 'express'; import cors from 'cors'; import cookieParser from 'cookie-parser'; import helmet from 'helmet'; import mongoose from '../../../backend/node_modules/mongoose/index.js'; import gigRoutes from './routes/gigRoutes.js';
-if(!process.env.JWT_SECRET||process.env.JWT_SECRET.length<32)throw new Error('Set the same JWT_SECRET as Module 1 in module2/backend/.env');
-const app=express();app.use(helmet());app.use(cors({origin:process.env.CLIENT_ORIGIN||'http://localhost:3000',credentials:true}));app.use(express.json({limit:'1mb'}));app.use(cookieParser());app.get('/api/health',(_req,res)=>res.json({status:'ok',service:'skill-for-hire-module2'}));app.use('/api/gigs',gigRoutes);app.use((e,_req,res,_next)=>{console.error(e);if(e.name==='ValidationError')return res.status(400).json({message:e.message});res.status(500).json({message:'Unexpected server error.'})});
-await mongoose.connect(process.env.MONGODB_URI||'mongodb://127.0.0.1:27017/p25_marketplace');const port=process.env.PORT||5001;app.listen(port,()=>console.log(`Module 2 API running on http://localhost:${port}`));
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Load module2/backend/.env regardless of where the process is started from.
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(currentDir, '../.env') });
+
+import express from 'express';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import mongoose from '../../../backend/node_modules/mongoose/index.js';
+import gigRoutes from './routes/gigRoutes.js';
+
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error('Set the same JWT_SECRET as Module 1 in module2/backend/.env');
+}
+
+const app = express();
+
+app.use(helmet());
+app.use(cors({ origin: process.env.CLIENT_ORIGIN || 'http://localhost:3000', credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
+
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'skill-for-hire-module2' }));
+app.use('/api/gigs', gigRoutes);
+
+// Return a JSON 404 for any route not matched above.
+app.use((_req, res) => {
+  res.status(404).json({ message: 'Route not found.' });
+});
+
+// Handle validation errors with 400 and all other errors with 500.
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({ message: err.message });
+  }
+  res.status(500).json({ message: 'Unexpected server error.' });
+});
+
+try {
+  await mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/p25_marketplace');
+  const port = process.env.PORT || 5001;
+  app.listen(port, () => console.log(`Module 2 API running on http://localhost:${port}`));
+} catch (error) {
+  console.error('Could not connect to MongoDB. Check MONGODB_URI in module2/backend/.env.', error.message);
+  process.exit(1);
+}
+
