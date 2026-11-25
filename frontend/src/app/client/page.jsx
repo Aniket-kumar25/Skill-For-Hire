@@ -1,132 +1,75 @@
-"use client";
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import SiteHeader from '../components/SiteHeader';
-import CreateGigForm from './components/CreateGigForm';
-import MyGigs from './components/MyGigs';
-import ApplicationsInbox from './components/ApplicationsInbox';
+import {
+  GIG_API,
+  formatDate,
+  requestJson,
+  verifyClientSession
+} from './clientHelpers';
 
-const AUTH_API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
-const GIG_API = process.env.NEXT_PUBLIC_GIG_API_URL || 'http://localhost:5001/api';
+function getStatusBadgeClass(status) {
+  if (status === 'accepted') {
+    return 'bg-emerald-50 text-emerald-700';
+  }
 
-const INITIAL_FORM = {
-  title: '',
-  description: '',
-  category: 'Web Development',
-  requiredSkills: '',
-  budgetMin: '1000',
-  budgetMax: '5000',
-  deadline: ''
-};
+  if (status === 'rejected') {
+    return 'bg-rose-50 text-rose-700';
+  }
 
-function formatBudget(amount) {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 0
-  }).format(Number(amount) || 0);
+  if (status === 'withdrawn') {
+    return 'bg-slate-100 text-slate-600';
+  }
+
+  return 'bg-amber-50 text-amber-700';
 }
 
-function formatDate(value) {
-  if (!value) {
-    return '';
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString();
-}
-
-function checkClientAccount(user) {
-  if (!user || typeof user !== 'object') {
-    return null;
-  }
-  if (Array.isArray(user.roles)) {
-    return user.roles.includes('client');
-  }
-  if (typeof user.role === 'string') {
-    return user.role === 'client';
-  }
-  return null;
-}
-
-async function requestJson(url, { method = 'GET', body } = {}, fallbackMessage) {
-  const options = { method, credentials: 'include' };
-  if (body !== undefined) {
-    options.headers = { 'Content-Type': 'application/json' };
-    options.body = JSON.stringify(body);
-  }
-
-  const response = await fetch(url, options);
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.message || fallbackMessage);
-  }
-
-  return data;
-}
-
-export default function ClientDashboard() {
+export default function ClientDashboardPage() {
   const router = useRouter();
 
   const [authLoading, setAuthLoading] = useState(true);
   const [authorized, setAuthorized] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [clientName, setClientName] = useState('there');
 
-  const [form, setForm] = useState(INITIAL_FORM);
-  const [submittingGig, setSubmittingGig] = useState(false);
-
-  const [myGigs, setMyGigs] = useState([]);
-  const [gigsLoading, setGigsLoading] = useState(true);
-
+  const [gigs, setGigs] = useState([]);
   const [applications, setApplications] = useState([]);
-  const [inboxLoading, setInboxLoading] = useState(true);
-
-  const [busyActions, setBusyActions] = useState({});
-  const [notice, setNotice] = useState(null);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
 
   useEffect(() => {
     let active = true;
 
-    async function verifyClientSession() {
+    async function checkSession() {
       let redirecting = false;
 
       try {
-        const response = await fetch(`${AUTH_API}/auth/me`, {
-          credentials: 'include'
-        });
+        const result = await verifyClientSession();
 
         if (!active) {
           return;
         }
 
-        if (response.status === 401) {
+        if (result.status === 'unauthenticated') {
           redirecting = true;
           router.replace('/auth');
           return;
         }
 
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.message || 'Could not verify your account.');
-        }
-
-        const isClient = checkClientAccount(data.user);
-        if (isClient === null) {
-          throw new Error('Could not verify your account.');
-        }
-
-        if (!isClient) {
+        if (result.status === 'forbidden') {
           redirecting = true;
           router.replace('/profile');
           return;
         }
 
-        if (active) {
-          setAuthorized(true);
+        if (result.user?.fullName) {
+          setClientName(result.user.fullName);
         }
+
+        setAuthorized(true);
       } catch (err) {
         if (active) {
           setAuthError(err?.message || 'Could not verify your account.');
@@ -138,188 +81,78 @@ export default function ClientDashboard() {
       }
     }
 
-    verifyClientSession();
+    checkSession();
 
     return () => {
       active = false;
     };
   }, [router]);
 
-  const showError = (text) => setNotice({ type: 'error', text });
-  const showSuccess = (text, showWorkLink = false) =>
-    setNotice({ type: 'success', text, showWorkLink });
-
-  async function loadMyGigs() {
-    setGigsLoading(true);
-    try {
-      const data = await requestJson(`${GIG_API}/gigs/client/mine`, {}, 'Could not load your gigs.');
-      if (!Array.isArray(data.gigs)) {
-        throw new Error('Could not load your gigs. Please try again.');
-      }
-      setMyGigs(data.gigs);
-    } catch (err) {
-      showError(err?.message || 'Could not load your gigs.');
-    } finally {
-      setGigsLoading(false);
-    }
-  }
-
-  async function loadInbox() {
-    setInboxLoading(true);
-    try {
-      const data = await requestJson(
-        `${GIG_API}/gigs/client/applications/inbox`,
-        {},
-        'Could not load applications.'
-      );
-      if (!Array.isArray(data.applications)) {
-        throw new Error('Could not load applications. Please try again.');
-      }
-      setApplications(data.applications);
-    } catch (err) {
-      showError(err?.message || 'Could not load applications.');
-    } finally {
-      setInboxLoading(false);
-    }
-  }
-
   useEffect(() => {
     if (!authorized) {
       return;
     }
 
-    loadMyGigs();
-    loadInbox();
+    let active = true;
+
+    async function loadDashboardData() {
+      setDataLoading(true);
+      setDataError('');
+
+      try {
+        const [gigsData, applicationsData] = await Promise.all([
+          requestJson(`${GIG_API}/gigs/client/mine`, {}, 'Could not load your gigs.'),
+          requestJson(
+            `${GIG_API}/gigs/client/applications/inbox`,
+            {},
+            'Could not load received applications.'
+          )
+        ]);
+
+        if (!active) {
+          return;
+        }
+
+        if (Array.isArray(gigsData.gigs)) {
+          setGigs(gigsData.gigs);
+        } else {
+          setGigs([]);
+        }
+
+        if (Array.isArray(applicationsData.applications)) {
+          setApplications(applicationsData.applications);
+        } else {
+          setApplications([]);
+        }
+      } catch (err) {
+        if (active) {
+          setDataError(err?.message || 'Could not load dashboard overview.');
+        }
+      } finally {
+        if (active) {
+          setDataLoading(false);
+        }
+      }
+    }
+
+    loadDashboardData();
+
+    return () => {
+      active = false;
+    };
   }, [authorized]);
 
-  function handleFieldChange(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }
+  const totalGigs = gigs.length;
+  const openGigs = gigs.filter((gig) => {
+    return gig.status === 'open';
+  }).length;
+  const totalApplications = applications.length;
+  const pendingApplications = applications.filter((application) => {
+    return application.status === 'pending';
+  }).length;
 
-  function setActionBusy(key, isBusy) {
-    setBusyActions((prev) => ({ ...prev, [key]: isBusy }));
-  }
-
-  async function handleCreateGig(event) {
-    event.preventDefault();
-    setNotice(null);
-
-    const title = form.title.trim();
-    const description = form.description.trim();
-    const requiredSkills = form.requiredSkills
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    if (title.length < 5) {
-      return showError('Gig title must contain at least 5 characters.');
-    }
-    if (description.length < 20) {
-      return showError('Description must contain at least 20 characters.');
-    }
-    if (requiredSkills.length === 0) {
-      return showError('Enter at least one required skill.');
-    }
-    if (requiredSkills.length > 20) {
-      return showError('You can list at most 20 required skills.');
-    }
-
-    const minText = String(form.budgetMin).trim();
-    const maxText = String(form.budgetMax).trim();
-    const budgetMin = minText !== '' ? Number(minText) : NaN;
-    const budgetMax = maxText !== '' ? Number(maxText) : NaN;
-
-    if (!Number.isFinite(budgetMin) || !Number.isFinite(budgetMax) || budgetMin < 0 || budgetMax < 0) {
-      return showError('Enter valid non-negative minimum and maximum budgets.');
-    }
-    if (budgetMax < budgetMin) {
-      return showError('Maximum budget must be at least minimum budget.');
-    }
-
-    const parsedDeadline = new Date(form.deadline);
-    if (!form.deadline || Number.isNaN(parsedDeadline.getTime()) || parsedDeadline <= new Date()) {
-      return showError('Gig deadline must be a valid future date.');
-    }
-
-    setSubmittingGig(true);
-
-    try {
-      await requestJson(
-        `${GIG_API}/gigs`,
-        {
-          method: 'POST',
-          body: {
-            title,
-            description,
-            category: form.category,
-            requiredSkills,
-            budgetMin,
-            budgetMax,
-            deadline: form.deadline
-          }
-        },
-        'Could not publish gig.'
-      );
-
-      setForm(INITIAL_FORM);
-      showSuccess('Your gig has been published.');
-      await loadMyGigs();
-    } catch (err) {
-      showError(err?.message || 'Could not publish gig.');
-    } finally {
-      setSubmittingGig(false);
-    }
-  }
-
-  async function handleChangeGigStatus(gigId, status) {
-    const busyKey = `gig-${gigId}`;
-    if (busyActions[busyKey]) {
-      return;
-    }
-
-    setActionBusy(busyKey, true);
-    setNotice(null);
-
-    try {
-      await requestJson(
-        `${GIG_API}/gigs/${gigId}/status`,
-        { method: 'PATCH', body: { status } },
-        'Could not update gig.'
-      );
-
-      showSuccess(`Gig ${status}.`);
-      await loadMyGigs();
-    } catch (err) {
-      showError(err?.message || 'Could not update gig.');
-    } finally {
-      setActionBusy(busyKey, false);
-    }
-  }
-
-  async function handleReviewApplication(applicationId, status) {
-    const busyKey = `app-${applicationId}`;
-    if (busyActions[busyKey]) {
-      return;
-    }
-
-    setActionBusy(busyKey, true);
-    setNotice(null);
-
-    try {
-      await requestJson(
-        `${GIG_API}/gigs/applications/${applicationId}`,
-        { method: 'PATCH', body: { status } },
-        'Could not update application.'
-      );
-
-      showSuccess(`Application ${status}.`, status === 'accepted');
-      await loadInbox();
-    } catch (err) {
-      showError(err?.message || 'Could not update application.');
-    } finally {
-      setActionBusy(busyKey, false);
-    }
-  }
+  // Show only the 5 most recently received applications on the overview page.
+  const recentApplications = applications.slice(0, 5);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
@@ -327,7 +160,7 @@ export default function ClientDashboard() {
 
       <div className="mx-auto max-w-6xl px-5 py-9 sm:px-8">
         {authLoading && (
-          <p className="py-16 text-center text-slate-500">Loading client workspace…</p>
+          <p className="py-16 text-center text-slate-500">Loading client dashboard…</p>
         )}
 
         {!authLoading && authError && (
@@ -341,69 +174,185 @@ export default function ClientDashboard() {
 
         {!authLoading && !authError && authorized && (
           <>
-            <p className="text-xs font-bold uppercase tracking-[.18em] text-teal-700">
-              Client workspace
-            </p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
-              Find the right people for your work.
-            </h1>
-            <p className="mt-2 max-w-2xl text-slate-600">
-              Publish a clear gig, review student applications and build your project team.
-            </p>
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-9">
+              <p className="text-xs font-bold uppercase tracking-[.18em] text-teal-700">
+                Client dashboard
+              </p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+                Welcome back, {clientName}.
+              </h1>
+              <p className="mt-2 max-w-2xl text-slate-600">
+                Track your published gigs, monitor incoming student proposals and manage your campus hiring workflow from one place.
+              </p>
 
-            {notice?.type === 'error' && (
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Link
+                  href="/client/gigs?create=true"
+                  className="rounded-xl bg-teal-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-teal-800"
+                >
+                  + Create New Gig
+                </Link>
+                <Link
+                  href="/client/gigs"
+                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-800 transition hover:border-teal-600 hover:text-teal-700"
+                >
+                  Manage My Gigs
+                </Link>
+                <Link
+                  href="/client/applications"
+                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-800 transition hover:border-teal-600 hover:text-teal-700"
+                >
+                  Review Applications
+                </Link>
+              </div>
+            </section>
+
+            {dataError && (
               <p
                 role="alert"
-                className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+                className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
               >
-                {notice.text}
+                {dataError}
               </p>
             )}
 
-            {notice?.type === 'success' && (
-              <div
-                role="status"
-                className="mt-5 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900"
-              >
-                <span>{notice.text}</span>
-                {notice.showWorkLink && (
-                  <>
-                    {' '}
-                    Manage milestones in{' '}
-                    <Link href="/work" className="font-semibold text-teal-800 underline">
-                      My Work
-                    </Link>
-                    .
-                  </>
-                )}
+            <section className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Total Published Gigs</p>
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {dataLoading ? '…' : totalGigs}
+                </p>
+                <Link
+                  href="/client/gigs"
+                  className="mt-3 inline-block text-sm font-semibold text-teal-700 hover:underline"
+                >
+                  View all gigs →
+                </Link>
+              </article>
+
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Open Gigs</p>
+                <p className="mt-2 text-3xl font-bold text-teal-700">
+                  {dataLoading ? '…' : openGigs}
+                </p>
+                <Link
+                  href="/client/gigs"
+                  className="mt-3 inline-block text-sm font-semibold text-teal-700 hover:underline"
+                >
+                  Manage listings →
+                </Link>
+              </article>
+
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Total Applications</p>
+                <p className="mt-2 text-3xl font-bold text-slate-950">
+                  {dataLoading ? '…' : totalApplications}
+                </p>
+                <Link
+                  href="/client/applications"
+                  className="mt-3 inline-block text-sm font-semibold text-teal-700 hover:underline"
+                >
+                  Open inbox →
+                </Link>
+              </article>
+
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-sm text-slate-500">Pending Applications</p>
+                <p className="mt-2 text-3xl font-bold text-amber-700">
+                  {dataLoading ? '…' : pendingApplications}
+                </p>
+                <Link
+                  href="/client/applications"
+                  className="mt-3 inline-block text-sm font-semibold text-teal-700 hover:underline"
+                >
+                  Review pending →
+                </Link>
+              </article>
+            </section>
+
+            <section className="mt-7 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">
+                    Recently Received Applications
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Latest student proposals across your published gigs.
+                  </p>
+                </div>
+                <Link
+                  href="/client/applications"
+                  className="text-sm font-bold text-teal-700 hover:underline"
+                >
+                  View all applications →
+                </Link>
               </div>
-            )}
 
-            <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_.95fr]">
-              <CreateGigForm
-                form={form}
-                onChange={handleFieldChange}
-                onSubmit={handleCreateGig}
-                submitting={submittingGig}
-              />
+              {dataLoading && (
+                <p className="mt-5 text-sm text-slate-500">Loading recent applications…</p>
+              )}
 
-              <MyGigs
-                gigs={myGigs}
-                loading={gigsLoading}
-                busyActions={busyActions}
-                onChangeStatus={handleChangeGigStatus}
-                formatBudget={formatBudget}
-                formatDate={formatDate}
-              />
+              {!dataLoading && recentApplications.length === 0 && (
+                <div className="mt-5 rounded-xl border border-dashed border-slate-200 p-8 text-center">
+                  <p className="font-semibold text-slate-900">No applications received yet</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Publish a gig and student applications will appear here as they arrive.
+                  </p>
+                  <Link
+                    href="/client/gigs?create=true"
+                    className="mt-4 inline-block rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-teal-800"
+                  >
+                    Create a gig →
+                  </Link>
+                </div>
+              )}
 
-              <ApplicationsInbox
-                applications={applications}
-                loading={inboxLoading}
-                busyActions={busyActions}
-                onReview={handleReviewApplication}
-                formatBudget={formatBudget}
-              />
-            </div>
+              {!dataLoading && recentApplications.length > 0 && (
+                <div className="mt-5 divide-y divide-slate-100">
+                  {recentApplications.map((application) => {
+                    const studentName = application.studentId?.fullName || 'Student applicant';
+                    const gigTitle = application.gigId?.title || 'Gig unavailable';
+                    const appliedDate = formatDate(application.createdAt);
+
+                    return (
+                      <article
+                        key={application._id}
+                        className="flex flex-wrap items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
+                      >
+                        <div>
+                          <h3 className="font-bold text-slate-900">{studentName}</h3>
+                          <p className="mt-0.5 text-sm text-slate-600">
+                            Applied for <span className="font-medium text-slate-800">{gigTitle}</span>
+                          </p>
+                          <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
+                            <span className="font-semibold text-teal-700">
+                              Skill match: {application.matchScore ?? 0}%
+                            </span>
+                            {appliedDate && <span>Submitted on {appliedDate}</span>}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${getStatusBadgeClass(
+                              application.status
+                            )}`}
+                          >
+                            {application.status}
+                          </span>
+                          <Link
+                            href="/client/applications"
+                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:border-teal-300 hover:text-teal-700"
+                          >
+                            Review →
+                          </Link>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </>
         )}
       </div>
