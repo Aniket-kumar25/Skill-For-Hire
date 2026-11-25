@@ -23,7 +23,7 @@ export default function ApplicationsInbox({
   return (
     <section
       id="applications"
-      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7 lg:col-span-2"
+      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7"
     >
       <div className="flex items-center justify-between gap-3">
         <div>
